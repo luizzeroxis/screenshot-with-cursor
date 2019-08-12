@@ -1,18 +1,22 @@
-#include <iostream>
+#include <stdio.h>
+#include <stdlib.h>
 #include <winuser.h>
 #include <wingdi.h>
 #include <gdiplus.h>
 
+void ShowUsage(FILE* where);
 void ShowUsage();
 
 void Screenshot();
 void InitGdiplus();
-int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
+int GetEncoderClsid(const wchar_t* format, CLSID* pClsid);
 
 char * arg0;
 
 bool drawCursor = true;
 wchar_t * outputFileName;
+
+bool verbose = false;
 
 CLSID encoderPNG;
 
@@ -32,6 +36,9 @@ int main(int argc, char * argv[]) {
 		} else if (strcmp(argv[i], "--nocursor")==0 || strcmp(argv[i], "-nc")==0) {
 			drawCursor = false;
 		
+		} else if (strcmp(argv[i], "--verbose")==0 || strcmp(argv[i], "-v")==0) {
+			verbose = true;
+
 		} else if (requiredArguments > 0) {
 
 			const char * outputChar = argv[i];
@@ -42,20 +49,23 @@ int main(int argc, char * argv[]) {
 
 			requiredArguments--;
 		} else {
-			std::cout << "Extra argument '" << argv[i] << "' ignored" << std::endl;
+			if (verbose) printf("Extra argument '%s' ignored\n", argv[i]);
 		}
 
 		i++;
 	}
 
 	if (requiredArguments != 0) {
-		ShowUsage();
-		return 0;
+		ShowUsage(stderr);
+		return 1;
 	}
 
-	std::cout << "drawCursor: " << drawCursor << std::endl;
-	std::cout << "outputFileName: ";
-	std::wcout << outputFileName << std::endl;
+	if (verbose) {
+		printf("drawCursor: %d\n", drawCursor);
+		printf("outputFileName: ");
+		wprintf(outputFileName);
+		printf("\n");
+	}
 
 	Screenshot();
 
@@ -63,43 +73,60 @@ int main(int argc, char * argv[]) {
 }
 
 // Displays help.
+void ShowUsage(FILE* where) {
+	fprintf(where, "Usage: %s [-h/--help] [-v/--verbose] [-nc/--nocursor] OUTPUT.PNG\n", arg0);
+}
+
 void ShowUsage() {
-	std::cerr << "Usage: " << arg0 << " [-h/--help] [-nc/--nocursor] OUTPUT.PNG" << std::endl;
+	ShowUsage(stdin);
 }
 
 // Screenshots.
 void Screenshot() {
 
+	if (verbose) printf("Taking screenshot...\n");
+
 	InitGdiplus();
+
+	if (verbose) printf("encoderPNG: %p\n", encoderPNG);
 
 	// Get size of screen
 	int width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
 	int height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-	// std::cout << "w: " << width << ", h: " << height << "\n";
+
+	if (verbose) printf("w: %d, h: %d\n", width, height);
 
 	// Get information about the cursor
 	CURSORINFO cursorInfo;
 	cursorInfo.cbSize = sizeof(CURSORINFO);
 	GetCursorInfo(&cursorInfo);
-	// std::cout << "cursorInfo.hCursor: " << cursorInfo.hCursor << "\n";
-	// std::cout << "cursorInfo.ptScreenPos: " << cursorInfo.ptScreenPos.x << ", " << cursorInfo.ptScreenPos.y << "\n";
+
+	if (verbose) {
+		printf("cursorInfo.hCursor: %p\n", cursorInfo.hCursor);
+		printf("cursorInfo.ptScreenPos: x: %d, y: %d\n", cursorInfo.ptScreenPos.x, cursorInfo.ptScreenPos.y);
+	}
 
 	// Get information about the cursor icon
 	ICONINFO iconInfo;
 	GetIconInfo(cursorInfo.hCursor, &iconInfo);
-	// std::cout << "iconInfo.xHotspot: " << iconInfo.xHotspot << "\n";
-	// std::cout << "iconInfo.yHotspot: " << iconInfo.yHotspot << "\n";
+
+	if (verbose) {
+		printf("iconInfo.xHotspot: %d\n", iconInfo.xHotspot);
+		printf("iconInfo.yHotspot: %d\n", iconInfo.yHotspot);
+	}
 
 	// Gets screen image
 	HDC hScreenDC = GetDC(NULL);
 
 	// Creates temporary memory DC
 	HDC hMemoryDC = CreateCompatibleDC(hScreenDC);
-	// std::cout << "hScreenDC: " << hScreenDC << ", hMemoryDC: " << hMemoryDC << "\n";
+
+	if (verbose) printf("hScreenDC: %p, hMemoryDC: %p\n", hScreenDC, hMemoryDC);
 
 	// Creates a bitmap for the screen
 	HBITMAP hBitmap = CreateCompatibleBitmap(hScreenDC, width, height);
-	// std::cout << "hBitmap: " << hBitmap << "\n";
+
+	if (verbose) printf("hBitmap: %p\n", hBitmap);
 
 	// Puts the bitmap in the memory??
 	SelectObject(hMemoryDC, hBitmap);
@@ -116,10 +143,12 @@ void Screenshot() {
 	}
 
 	// Puts bitmap inside gdiplus bitmap
-	Gdiplus::Bitmap newBitmap (hBitmap, NULL);
+	Gdiplus::Bitmap gdiBitmap (hBitmap, NULL);
+
+	if (verbose) printf("gdiBitmap: %p\n", &gdiBitmap);
 
 	// Saves bitmap to file
-	newBitmap.Save(outputFileName, &encoderPNG, NULL);
+	gdiBitmap.Save(outputFileName, &encoderPNG, NULL);
 
 }
 
@@ -134,7 +163,7 @@ void InitGdiplus() {
 }
 
 // Copied from the documentation!
-int GetEncoderClsid(const WCHAR* format, CLSID* pClsid) {
+int GetEncoderClsid(const wchar_t* format, CLSID* pClsid) {
 	using namespace Gdiplus;
 
 	UINT num = 0; // number of image encoders
