@@ -8,25 +8,29 @@
 
 // Arguments
 char * arg0;
+
+const wchar_t * encoderMime;
 bool drawCursor = true;
 char * logFileName;
 wchar_t * outputFileName;
 
 void ParseArguments(int argc, char * argv[]);
 void ShowUsage(FILE* where);
+wchar_t * GetExtensionMIMEFormat(wchar_t * fileName);
 
 //
 FILE * logFile = NULL;
 
+Gdiplus::ImageCodecInfo * GetEncoderList(UINT * num);
 void ShowEncoderList();
 void Screenshot(BITMAPINFO * outBitmapInfo, BYTE ** outBitmapData);
-void ImageToPNG(BITMAPINFO * bitmapInfo, BYTE ** bitmapData);
+void ImageToFile(BITMAPINFO * bitmapInfo, BYTE ** bitmapData);
 
 //
 wchar_t * CharToWchar_t(char * charPointer);
 void InitGdiplus();
 int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
-CLSID encoderPNG;
+CLSID encoderCLSID;
 
 int main(int argc, char * argv[]) {
 
@@ -34,13 +38,11 @@ int main(int argc, char * argv[]) {
 
 	InitGdiplus();
 
-	ShowEncoderList();
-
 	BITMAPINFO screenBitmapInfo;
 	BYTE * screenBitmapData;
 
 	Screenshot(&screenBitmapInfo, &screenBitmapData);
-	ImageToPNG(&screenBitmapInfo, &screenBitmapData);
+	ImageToFile(&screenBitmapInfo, &screenBitmapData);
 
 	fprintf(logFile, "\n");
 
@@ -60,15 +62,34 @@ void ParseArguments(int argc, char * argv[]) {
 			ShowUsage(stdout);
 			exit(0);
 
+		} else if (strcmp(argv[i], "--formatlist")==0) {
+			InitGdiplus();
+			ShowEncoderList();
+			exit(0);
+
+		} else if (strcmp(argv[i], "--format")==0 || strcmp(argv[i], "-f")==0) {
+
+			i++;
+			if (i<argc) {
+				encoderMime = CharToWchar_t(argv[i]);
+			} else {
+				fprintf(logFile, "No mime format provided!\n");
+			}
+
 		} else if (strcmp(argv[i], "--nocursor")==0 || strcmp(argv[i], "-nc")==0) {
 			drawCursor = false;
 		
 		} else if (strcmp(argv[i], "--log")==0 || strcmp(argv[i], "-l")==0) {
-			i++;
 
+			i++;
 			if (i<argc) {
 				logFileName = argv[i];
-				logFile = fopen(logFileName, "a");
+
+				if (strcmp(logFileName, "-")==0) {
+					logFile = stdout;
+				} else {
+					logFile = fopen(logFileName, "a");
+				}
 
 				if (logFile == NULL) {
 					fprintf(stderr, "Failed to open log file!\n");
@@ -80,7 +101,6 @@ void ParseArguments(int argc, char * argv[]) {
 		} else if (requiredArguments>0) {
 
 			outputFileName = CharToWchar_t(argv[i]);
-
 			requiredArguments--;
 
 		} else {
@@ -97,6 +117,7 @@ void ParseArguments(int argc, char * argv[]) {
 
 	fprintf(logFile, "- Parsed arguments:\n");
 	fprintf(logFile, "arg0: %s\n", arg0);
+	fwprintf(logFile, L"encoderMime: %s\n", encoderMime);
 	fprintf(logFile, "drawCursor: %d\n", drawCursor);
 	fprintf(logFile, "logFileName: %s\n", logFileName);
 	fwprintf(logFile, L"outputFileName: %s\n", outputFileName);
@@ -104,39 +125,70 @@ void ParseArguments(int argc, char * argv[]) {
 
 // Displays help.
 void ShowUsage(FILE* where) {
-	fprintf(where, "Usage: %s [-h/--help] [-l/--log [LOGFILE]] [-nc/--nocursor] OUTPUTFILE.PNG\n", arg0);
+	fprintf(where, "Usage: %s [-h/--help] [--formatlist] [-f/--format] [-nc/--nocursor] [-l/--log [LOGFILE]] OUTPUTFILE\n", arg0);
 }
 
-// Shows list of avaliable encoders.
-void ShowEncoderList() {
+// Get mime format of extension
+wchar_t * GetExtensionMIMEFormat(wchar_t * fileName) {
 
-	using namespace Gdiplus;
+	wchar_t * fileNameCopy = new wchar_t[wcslen(fileName)];
+	wcscpy(fileNameCopy, fileName); // must copy because upr is in place
 
-	fprintf(logFile, "- List of encoders:\n");
-
-	UINT num = 0; // number of image encoders
-	UINT size = 0; // size of the image encoder array in bytes
-
-	GetImageEncodersSize(&num, &size);
-	if (size == 0) {
-		fprintf(logFile, "No encoders!\n");
+	wchar_t * extension = wcsrchr(fileNameCopy, L'.');
+	if (extension == NULL) {
+		return NULL;
 	}
 
-	ImageCodecInfo * imageCodecInfoArray = new ImageCodecInfo[size];
+	_wcsupr(extension);
 
-	Gdiplus::Status status = GetImageEncoders(num, size, imageCodecInfoArray);
-	fprintf(logFile, "Gdiplus::GetImageEncoders returns: %d\n", status);
-	if ( status != Gdiplus::Ok) {
-		fprintf(logFile, "Failed to get image encoders!\n");
-	}
+	UINT num;
+	Gdiplus::ImageCodecInfo * encoders = GetEncoderList(&num);
 
 	for (UINT i = 0; i < num; ++i) {
-		fprintf(logFile, "[#%d]\n", i);
-		fwprintf(logFile, L"Clsid: %p\n", imageCodecInfoArray[i].Clsid);
-		fwprintf(logFile, L"CodecName: %s\n", imageCodecInfoArray[i].CodecName);
-		fwprintf(logFile, L"FormatDescription: %s\n", imageCodecInfoArray[i].FormatDescription);
-		fwprintf(logFile, L"FilenameExtension: %s\n", imageCodecInfoArray[i].FilenameExtension);
-		fwprintf(logFile, L"MimeType: %s\n", imageCodecInfoArray[i].MimeType);
+		wchar_t * token = wcstok(encoders[i].FilenameExtension, L";");
+		while(token != NULL) {
+			if (wcscmp(token+1, extension)==0) {
+				return encoders[i].MimeType;
+			}
+			token = wcstok(NULL, L";");
+		}
+	}
+
+	return NULL;
+}
+
+// Gets list of avaliable encoders
+Gdiplus::ImageCodecInfo * GetEncoderList(UINT * num) {
+
+	UINT size = 0; // size of the image encoder array in bytes
+
+	Gdiplus::GetImageEncodersSize(num, &size);
+	if (size == 0) {
+		fprintf(logFile, "No encoders!\n");
+		exit(1);
+	}
+
+	Gdiplus::ImageCodecInfo * imageCodecInfoArray = new Gdiplus::ImageCodecInfo[size];
+
+	Gdiplus::Status status = Gdiplus::GetImageEncoders(*num, size, imageCodecInfoArray);
+	if ( status != Gdiplus::Ok) {
+		fprintf(logFile, "Gdiplus::GetImageEncoders returns: %d\n", status);
+		fprintf(logFile, "Failed to get image encoders!\n");
+		exit(1);
+	}
+
+	return imageCodecInfoArray;
+
+}
+
+// Shows list of encoders
+void ShowEncoderList() {
+
+	UINT num;
+	Gdiplus::ImageCodecInfo * encoders = GetEncoderList(&num);
+
+	for (UINT i = 0; i < num; ++i) {
+		wprintf(L"%s\n", encoders[i].MimeType);
 	}
 
 }
@@ -221,22 +273,39 @@ void Screenshot(BITMAPINFO * outBitmapInfo, BYTE ** outBitmapData) {
 	
 }
 
-// Converts the image to a PNG.
-void ImageToPNG(BITMAPINFO * bitmapInfo, BYTE ** bitmapData) {
+// Converts the image into a format and puts in a file.
+void ImageToFile(BITMAPINFO * bitmapInfo, BYTE ** bitmapData) {
 
 	fprintf(logFile, "- Saving image to file.\n");
 
 	// Make gdiplus object and save it
 	Gdiplus::Bitmap * gdiBitmap = Gdiplus::Bitmap::FromBITMAPINFO(bitmapInfo, *bitmapData);
 
-	int result = GetEncoderClsid(L"image/png", &encoderPNG);
-
-	fprintf(logFile, "GetEncoderClsid returns: %d\n", result);
-	if (result == -1) {
-		fprintf(logFile, "Failed to get encoder CLSID!\n");
+	if (encoderMime == NULL) {
+		fprintf(logFile, "Deducing format from file name extension\n");
+		encoderMime = GetExtensionMIMEFormat(outputFileName);
+		if (encoderMime == NULL) {
+			fprintf(logFile, "Failed to deduce format, defaulting to image/bmp\n");
+			encoderMime = L"image/bmp";
+		}
 	}
 
-	Gdiplus::Status status = gdiBitmap -> Save(outputFileName, &encoderPNG, NULL);
+	fwprintf(logFile, L"encoderMime: %s\n", encoderMime);
+
+	int result = GetEncoderClsid(encoderMime, &encoderCLSID);
+
+	fprintf(logFile, "GetEncoderClsid returns: %d\n", result);
+	if (result != 0) {
+		if (result == 2) {
+			fwprintf(logFile, L"No mime format called %s! Use --formatlist for a list of formats.\n", encoderMime);
+			fwprintf(stderr, L"No mime format called %s! Use --formatlist for a list of formats.\n", encoderMime);
+		} else {
+			fprintf(logFile, "Failed to get encoder CLSID!\n");
+		}
+		exit(1);
+	}
+
+	Gdiplus::Status status = gdiBitmap -> Save(outputFileName, &encoderCLSID, NULL);
 
 	fprintf(logFile, "Gdiplus::Save returns: %d\n", status);
 	if ( status != Gdiplus::Ok) {
@@ -300,5 +369,5 @@ int GetEncoderClsid(const WCHAR* format, CLSID* pClsid)
    }
 
    free(pImageCodecInfo);
-   return 1;  // Failure
+   return 2;  // Failure
 }
