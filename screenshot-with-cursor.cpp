@@ -9,6 +9,8 @@
 // Arguments
 char * arg0;
 
+bool saveToFile = false;
+bool saveToClipboard = false;
 const wchar_t * encoderMime;
 bool drawCursor = true;
 char * logFileName;
@@ -23,8 +25,11 @@ FILE * logFile = NULL;
 
 Gdiplus::ImageCodecInfo * GetEncoderList(UINT * num);
 void ShowEncoderList();
-void Screenshot(BITMAPINFO * outBitmapInfo, BYTE ** outBitmapData);
+
+void Screenshot(HDC * outHDC, HBITMAP * outHBitmap);
+void GetHDCAndHBitmapBitmapInfoAndData(HDC * hdc, HBITMAP * hBitmap, BITMAPINFO * bitmapInfo, BYTE ** bitmapData);
 void ImageToFile(BITMAPINFO * bitmapInfo, BYTE ** bitmapData);
+void ImageToClipboard(HBITMAP * outHBitmap);
 
 //
 wchar_t * CharToWchar_t(char * charPointer);
@@ -38,11 +43,25 @@ int main(int argc, char * argv[]) {
 
 	InitGdiplus();
 
+	HDC screenHDC;
+	HBITMAP screenHBitmap;
 	BITMAPINFO screenBitmapInfo;
 	BYTE * screenBitmapData;
 
-	Screenshot(&screenBitmapInfo, &screenBitmapData);
-	ImageToFile(&screenBitmapInfo, &screenBitmapData);
+	Screenshot(&screenHDC, &screenHBitmap);
+	GetHDCAndHBitmapBitmapInfoAndData(&screenHDC, &screenHBitmap, &screenBitmapInfo, &screenBitmapData);
+
+	DeleteDC(screenHDC);
+
+	if (saveToFile) {
+		ImageToFile(&screenBitmapInfo, &screenBitmapData);
+	}
+
+	if (saveToClipboard) {
+		ImageToClipboard(&screenHBitmap);
+	}
+
+	DeleteObject(screenHBitmap);
 
 	fprintf(logFile, "\n");
 
@@ -58,25 +77,33 @@ void ParseArguments(int argc, char * argv[]) {
 	int i = 1;
 	while (i<argc) {
 
+		// help
+
 		if (strcmp(argv[i], "--help")==0 || strcmp(argv[i], "-h")==0) {
 			ShowUsage(stdout);
-			exit(0);
 
-		} else if (strcmp(argv[i], "--formatlist")==0) {
+		} else if (strcmp(argv[i], "--list-file-formats")==0) {
 			InitGdiplus();
 			ShowEncoderList();
-			exit(0);
 
-		} else if (strcmp(argv[i], "--format")==0 || strcmp(argv[i], "-f")==0) {
+		// output
+
+		} else if (strcmp(argv[i], "--clipboard")==0 || strcmp(argv[i], "-c")==0) {
+
+			saveToClipboard = true;
+
+		// options
+
+		} else if (strcmp(argv[i], "--file-format")==0 || strcmp(argv[i], "-f")==0) {
 
 			i++;
 			if (i<argc) {
 				encoderMime = CharToWchar_t(argv[i]);
 			} else {
-				fprintf(logFile, "No mime format provided!\n");
+				fprintf(logFile, "--file-format requires 1 more argument\n");
 			}
 
-		} else if (strcmp(argv[i], "--nocursor")==0 || strcmp(argv[i], "-nc")==0) {
+		} else if (strcmp(argv[i], "--no-cursor")==0) {
 			drawCursor = false;
 		
 		} else if (strcmp(argv[i], "--log")==0 || strcmp(argv[i], "-l")==0) {
@@ -95,37 +122,59 @@ void ParseArguments(int argc, char * argv[]) {
 					fprintf(stderr, "Failed to open log file!\n");
 				}
 			} else {
-				fprintf(stderr, "No log file provided!\n");
+				fprintf(stderr, "--log requires 1 more argument\n");
 			}
+
+		// default
 
 		} else if (requiredArguments>0) {
 
+			saveToFile = true;
 			outputFileName = CharToWchar_t(argv[i]);
 			requiredArguments--;
 
 		} else {
-			fprintf(logFile, "Extra argument '%s' ignored\n", argv[i]);
+			fprintf(logFile, "Unknown argument '%s'\n", argv[i]);
 		}
 
 		i++;
 	}
 
-	if (requiredArguments!=0) {
-		ShowUsage(stderr);
-		exit(1);
+	// required things
+	if (requiredArguments != 0) {
+		if (!saveToClipboard) {
+			ShowUsage(stderr);
+			exit(1);
+		}
 	}
 
 	fprintf(logFile, "- Parsed arguments:\n");
 	fprintf(logFile, "arg0: %s\n", arg0);
+	fprintf(logFile, "saveToClipboard: %d\n", saveToClipboard);
 	fwprintf(logFile, L"encoderMime: %s\n", encoderMime);
 	fprintf(logFile, "drawCursor: %d\n", drawCursor);
 	fprintf(logFile, "logFileName: %s\n", logFileName);
+	fprintf(logFile, "saveToFile: %d\n", saveToFile);
 	fwprintf(logFile, L"outputFileName: %s\n", outputFileName);
 }
 
 // Displays help.
 void ShowUsage(FILE* where) {
-	fprintf(where, "Usage: %s [-h/--help] [--formatlist] [-f/--format] [-nc/--nocursor] [-l/--log [LOGFILE]] OUTPUTFILE\n", arg0);
+	
+	fprintf(where, "Takes a screenshot with the cursor icon.\n"
+		"\n"
+		"Usage: %s [-h] [--clipboard] <outputfile>\n"
+		"\n"
+		"Options:\n"
+		"  -h --help            Shows this screen.\n"
+		"  --list-file-formats  Shows a list of avaliable file formats.\n"
+		"\n"
+		"  --clipboard          Copies the screenshot to the clipboard.\n"
+		"  --file-format        Sets the format of the output file.\n"
+		"  --no-cursor          Do not draw cursor icon, making this pointless.\n"
+		"\n"
+		"  --log <filename>     Outputs information to a file. Use '-' to use the standard output.\n", arg0);
+
 }
 
 // Get mime format of extension
@@ -193,8 +242,7 @@ void ShowEncoderList() {
 
 }
 
-// Takes screenshot and draws mouse cursor
-void Screenshot(BITMAPINFO * outBitmapInfo, BYTE ** outBitmapData) {
+void Screenshot(HDC * hMemoryDC, HBITMAP * hBitmap) {
 
 	fprintf(logFile, "- Taking a screenshot.\n");
 
@@ -202,7 +250,7 @@ void Screenshot(BITMAPINFO * outBitmapInfo, BYTE ** outBitmapData) {
 	HDC hScreenDC = GetDC(NULL);
 
 	// Creates temporary memory DC
-	HDC hMemoryDC = CreateCompatibleDC(hScreenDC);
+	*hMemoryDC = CreateCompatibleDC(hScreenDC);
 
 	// Get size of screen
 	int width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
@@ -211,13 +259,15 @@ void Screenshot(BITMAPINFO * outBitmapInfo, BYTE ** outBitmapData) {
 	fprintf(logFile, "Size of screen: %dx%d\n", width, height);
 
 	// Creates a bitmap for the screen
-	HBITMAP hBitmap = CreateCompatibleBitmap(hScreenDC, width, height);
+	*hBitmap = CreateCompatibleBitmap(hScreenDC, width, height);
 
 	// Puts the bitmap in the memory, or something like that
-	SelectObject(hMemoryDC, hBitmap);
+	HBITMAP oldHBitmap = (HBITMAP) SelectObject(*hMemoryDC, *hBitmap);
 
 	// Copies from the screen to the memory (consequently, the bitmap)
-	BitBlt(hMemoryDC, 0, 0, width, height, hScreenDC, 0, 0, SRCCOPY);
+	BitBlt(*hMemoryDC, 0, 0, width, height, hScreenDC, 0, 0, SRCCOPY);
+
+	ReleaseDC(NULL, hScreenDC);
 
 	// Get information about the cursor
 	CURSORINFO cursorInfo;
@@ -240,37 +290,38 @@ void Screenshot(BITMAPINFO * outBitmapInfo, BYTE ** outBitmapData) {
 
 	if (drawCursor) {
 		// Draws the cursor icon at the right proper position
-		DrawIcon(hMemoryDC, iconPosX, iconPosY, cursorInfo.hCursor);
+		DrawIcon(*hMemoryDC, iconPosX, iconPosY, cursorInfo.hCursor);
 	}
 
-	// Getting bits from hmemorydc and hbitmap
+	SelectObject(*hMemoryDC, oldHBitmap);
+	
+}
+
+void GetHDCAndHBitmapBitmapInfoAndData(HDC * hdc, HBITMAP * hBitmap, BITMAPINFO * bitmapInfo, BYTE ** bitmapData) {
+
+	// Get bitmap object
+	BITMAP bitmap;
+	GetObject(*hBitmap, sizeof(bitmap), &bitmap);
 
 	// Make a bitmap info object
-	BITMAPINFO bitmapInfo;
-	bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
-	bitmapInfo.bmiHeader.biWidth = width;
-	bitmapInfo.bmiHeader.biHeight = -height;
-	bitmapInfo.bmiHeader.biPlanes = 1;
-	bitmapInfo.bmiHeader.biBitCount = 24;
-	bitmapInfo.bmiHeader.biCompression = BI_RGB;
+	(*bitmapInfo).bmiHeader.biSize = sizeof((*bitmapInfo).bmiHeader);
+	(*bitmapInfo).bmiHeader.biWidth = bitmap.bmWidth;
+	(*bitmapInfo).bmiHeader.biHeight = -bitmap.bmHeight;
+	(*bitmapInfo).bmiHeader.biPlanes = bitmap.bmPlanes;
+	(*bitmapInfo).bmiHeader.biBitCount = bitmap.bmBitsPixel;
+	(*bitmapInfo).bmiHeader.biCompression = BI_RGB;
 
-	size_t pixelSize = bitmapInfo.bmiHeader.biBitCount / 8;
-	size_t scanlineSize = (pixelSize * bitmapInfo.bmiHeader.biWidth + 3) & ~3; // magic
-	size_t bitmapSize = -(bitmapInfo.bmiHeader.biHeight) * scanlineSize;
-
-	fprintf(logFile, "Bytes per pixel: %d\n", pixelSize);
-	fprintf(logFile, "Bytes per line: %d\n", scanlineSize);
-	fprintf(logFile, "Total bytes: %d\n", bitmapSize);
+	// Size, with scanline size aligned to 4 bytes
+	size_t bitmapSize = ((((bitmap.bmBitsPixel / 8) * bitmap.bmWidth) + 3) & ~3) * bitmap.bmHeight;
+	fprintf(logFile, "Size of bitmap: %d\n", bitmapSize);
 
 	// Allocate bitmap data
-	BYTE * bitmapData = new BYTE[bitmapSize];
+	*bitmapData = new BYTE[bitmapSize];
 
-	GetDIBits(hMemoryDC, hBitmap, 0, height, bitmapData, &bitmapInfo, DIB_RGB_COLORS);
+	if (GetDIBits(*hdc, *hBitmap, 0, bitmap.bmHeight, *bitmapData, &(*bitmapInfo), DIB_RGB_COLORS) == 0) {
+		fprintf(logFile, "Failed to GetDIBits!\n");
+	};
 
-	// Output stuff
-	*outBitmapInfo = bitmapInfo;
-	*outBitmapData = bitmapData;
-	
 }
 
 // Converts the image into a format and puts in a file.
@@ -279,7 +330,7 @@ void ImageToFile(BITMAPINFO * bitmapInfo, BYTE ** bitmapData) {
 	fprintf(logFile, "- Saving image to file.\n");
 
 	// Make gdiplus object and save it
-	Gdiplus::Bitmap * gdiBitmap = Gdiplus::Bitmap::FromBITMAPINFO(bitmapInfo, *bitmapData);
+	Gdiplus::Bitmap * gdiBitmap = Gdiplus::Bitmap::FromBITMAPINFO(&(*bitmapInfo), *bitmapData);
 
 	if (encoderMime == NULL) {
 		fprintf(logFile, "Deducing format from file name extension\n");
@@ -297,8 +348,8 @@ void ImageToFile(BITMAPINFO * bitmapInfo, BYTE ** bitmapData) {
 	fprintf(logFile, "GetEncoderClsid returns: %d\n", result);
 	if (result != 0) {
 		if (result == 2) {
-			fwprintf(logFile, L"No mime format called %s! Use --formatlist for a list of formats.\n", encoderMime);
-			fwprintf(stderr, L"No mime format called %s! Use --formatlist for a list of formats.\n", encoderMime);
+			fwprintf(logFile, L"No mime format called %s! Use --list-file-formats for a list of formats.\n", encoderMime);
+			fwprintf(stderr, L"No mime format called %s! Use --list-file-formats for a list of formats.\n", encoderMime);
 		} else {
 			fprintf(logFile, "Failed to get encoder CLSID!\n");
 		}
@@ -310,6 +361,33 @@ void ImageToFile(BITMAPINFO * bitmapInfo, BYTE ** bitmapData) {
 	fprintf(logFile, "Gdiplus::Save returns: %d\n", status);
 	if ( status != Gdiplus::Ok) {
 		fprintf(logFile, "Failed to save file!\n");
+	}
+
+}
+
+//
+void ImageToClipboard(HBITMAP * outHBitmap) {
+
+	fprintf(logFile, "- Copying image to clipboard.\n");
+
+	if (OpenClipboard(NULL) == 0) {
+		fprintf(logFile, "Failed to OpenClipboard!\n");
+		exit(1);
+	}
+
+	if (EmptyClipboard() == 0) {
+		fprintf(logFile, "Failed to EmptyClipboard!\n");
+		exit(1);
+	}
+
+	if (SetClipboardData(CF_BITMAP, *outHBitmap) == NULL) {
+		fprintf(logFile, "Failed to SetClipboardData!\n");
+		exit(1);
+	}
+
+	if (CloseClipboard() == 0) {
+		fprintf(logFile, "Failed to CloseClipboard!\n");
+		exit(1);
 	}
 
 }
