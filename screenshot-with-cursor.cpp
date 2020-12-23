@@ -167,17 +167,17 @@ void ShowUsage(FILE* where) {
 	
 	fprintf(where, "Takes a screenshot with the cursor icon.\n"
 		"\n"
-		"Usage: %s [-h] [--clipboard] <outputfile>\n"
+		"Usage: %s [options] [<output file>]\n"
 		"\n"
 		"Options:\n"
-		"  -h --help            Shows this screen.\n"
-		"  --list-file-formats  Shows a list of avaliable file formats.\n"
+		"  -h, --help                  Shows this screen.\n"
+		"  -c, --clipboard             Copies the screenshot to the clipboard.\n"
+		"  -f, --file-format <format>  Sets the format of the output file.\n"
+		"  --list-file-formats         Shows a list of avaliable file formats.\n"
+		"  --no-cursor                 Do not draw cursor icon, making this pointless.\n"
+		"  -l, --log <file>            Outputs information to a file. Use '-' to use the standard output.\n"
 		"\n"
-		"  --clipboard          Copies the screenshot to the clipboard.\n"
-		"  --file-format        Sets the format of the output file.\n"
-		"  --no-cursor          Do not draw cursor icon, making this pointless.\n"
-		"\n"
-		"  --log <filename>     Outputs information to a file. Use '-' to use the standard output.\n", arg0);
+	, arg0);
 
 }
 
