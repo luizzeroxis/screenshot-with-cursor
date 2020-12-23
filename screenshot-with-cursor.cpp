@@ -173,7 +173,7 @@ void ShowUsage(FILE* where) {
 		"  -h, --help                  Shows this screen.\n"
 		"  -c, --clipboard             Copies the screenshot to the clipboard.\n"
 		"  -f, --file-format <format>  Sets the format of the output file.\n"
-		"  --list-file-formats         Shows a list of avaliable file formats.\n"
+		"  --list-file-formats         Shows a list of available file formats.\n"
 		"  --no-cursor                 Do not draw cursor icon, making this pointless.\n"
 		"  -l, --log <file>            Outputs information to a file. Use '-' to use the standard output.\n"
 		"\n"
