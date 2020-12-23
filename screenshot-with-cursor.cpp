@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-//#include <windows.h> // needed?
+#include <windows.h>
 #include <winuser.h>
 #include <wingdi.h>
 #include <gdiplus.h>
@@ -21,7 +21,7 @@ void ShowUsage(FILE* where);
 wchar_t * GetExtensionMIMEFormat(wchar_t * fileName);
 
 //
-FILE * logFile = NULL;
+FILE * logFile;
 
 Gdiplus::ImageCodecInfo * GetEncoderList(UINT * num);
 void ShowEncoderList();
@@ -38,6 +38,8 @@ int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
 CLSID encoderCLSID;
 
 int main(int argc, char * argv[]) {
+
+	logFile = fopen("NUL", "a");
 
 	ParseArguments(argc, argv);
 
@@ -63,7 +65,7 @@ int main(int argc, char * argv[]) {
 
 	DeleteObject(screenHBitmap);
 
-	fprintf(logFile, "\n");
+	fprintf(logFile, "Exiting\n");
 
 	return 0;
 }
@@ -111,6 +113,8 @@ void ParseArguments(int argc, char * argv[]) {
 			i++;
 			if (i<argc) {
 				logFileName = argv[i];
+
+				fclose(logFile);
 
 				if (strcmp(logFileName, "-")==0) {
 					logFile = stdout;
@@ -313,7 +317,7 @@ void GetHDCAndHBitmapBitmapInfoAndData(HDC * hdc, HBITMAP * hBitmap, BITMAPINFO 
 
 	// Size, with scanline size aligned to 4 bytes
 	size_t bitmapSize = ((((bitmap.bmBitsPixel / 8) * bitmap.bmWidth) + 3) & ~3) * bitmap.bmHeight;
-	fprintf(logFile, "Size of bitmap: %d\n", bitmapSize);
+	fprintf(logFile, "Size of bitmap: %lld\n", bitmapSize);
 
 	// Allocate bitmap data
 	*bitmapData = new BYTE[bitmapSize];
@@ -359,7 +363,7 @@ void ImageToFile(BITMAPINFO * bitmapInfo, BYTE ** bitmapData) {
 	Gdiplus::Status status = gdiBitmap -> Save(outputFileName, &encoderCLSID, NULL);
 
 	fprintf(logFile, "Gdiplus::Save returns: %d\n", status);
-	if ( status != Gdiplus::Ok) {
+	if (status != Gdiplus::Ok) {
 		fprintf(logFile, "Failed to save file!\n");
 	}
 
